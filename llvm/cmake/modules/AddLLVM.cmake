@@ -98,6 +98,56 @@ function(llvm_update_compile_flags name)
   set_property(TARGET ${name} APPEND PROPERTY COMPILE_DEFINITIONS ${LLVM_COMPILE_DEFINITIONS})
 endfunction()
 
+function(llvm_msvc_dllify_prune_static_components target_name)
+  if(NOT LLVM_USE_MSVC_DLLIFY OR NOT LLVM_LINK_LLVM_DYLIB)
+    return()
+  endif()
+  if(NOT TARGET ${target_name})
+    return()
+  endif()
+
+  get_target_property(target_type ${target_name} TYPE)
+  if(target_type STREQUAL "STATIC_LIBRARY" OR target_type STREQUAL "OBJECT_LIBRARY")
+    return()
+  endif()
+
+  get_target_property(link_libraries ${target_name} LINK_LIBRARIES)
+  if(NOT link_libraries)
+    return()
+  endif()
+
+  # Only rewrite targets that already link the LLVM dylib.  The LLVM target's
+  # interface supplies the generated component stubs in the MSVC dllify build,
+  # so direct links to component archives would otherwise pull static code back
+  # into the final binary.
+  if(NOT "LLVM" IN_LIST link_libraries)
+    return()
+  endif()
+
+  llvm_map_components_to_libnames(llvm_dylib_libs ${LLVM_DYLIB_COMPONENTS})
+  list(REMOVE_ITEM llvm_dylib_libs
+    LLVM
+    LLVM-C
+    LLVMTableGen
+    LLVMTableGenBasic
+    LLVMTableGenCommon)
+  list(REMOVE_DUPLICATES llvm_dylib_libs)
+
+  set(filtered_link_libraries)
+  set(changed OFF)
+  foreach(link_library ${link_libraries})
+    if(link_library IN_LIST llvm_dylib_libs)
+      set(changed ON)
+    else()
+      list(APPEND filtered_link_libraries "${link_library}")
+    endif()
+  endforeach()
+
+  if(changed)
+    set_property(TARGET ${target_name} PROPERTY LINK_LIBRARIES "${filtered_link_libraries}")
+  endif()
+endfunction()
+
 function(add_llvm_symbol_exports target_name export_file)
   if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     set(native_export_file "${target_name}.exports")
@@ -804,6 +854,11 @@ function(llvm_add_library name)
       ${llvm_libs}
       )
 
+  if(LLVM_USE_MSVC_DLLIFY AND LLVM_LINK_LLVM_DYLIB AND
+     NOT ARG_DISABLE_LLVM_LINK_LLVM_DYLIB AND NOT ARG_COMPONENT_LIB AND NOT ARG_STATIC)
+    cmake_language(DEFER CALL llvm_msvc_dllify_prune_static_components ${name})
+  endif()
+
   if(LLVM_COMMON_DEPENDS)
     add_dependencies(${name} ${LLVM_COMMON_DEPENDS})
     # Add dependencies also to objlibs.
@@ -1130,6 +1185,9 @@ macro(add_llvm_executable name)
   set(EXCLUDE_FROM_ALL OFF)
   set_output_directory(${name} BINARY_DIR ${LLVM_RUNTIME_OUTPUT_INTDIR} LIBRARY_DIR ${LLVM_LIBRARY_OUTPUT_INTDIR})
   llvm_config( ${name} ${USE_SHARED} ${LLVM_LINK_COMPONENTS} )
+  if(LLVM_USE_MSVC_DLLIFY AND LLVM_LINK_LLVM_DYLIB AND NOT ARG_DISABLE_LLVM_LINK_LLVM_DYLIB)
+    cmake_language(DEFER CALL llvm_msvc_dllify_prune_static_components ${name})
+  endif()
   if( LLVM_COMMON_DEPENDS )
     add_dependencies( ${name} ${LLVM_COMMON_DEPENDS} )
     foreach(objlib ${obj_name})
@@ -1523,7 +1581,14 @@ macro(llvm_add_tool project name)
 endmacro(llvm_add_tool project name)
 
 macro(add_llvm_tool name)
-  llvm_add_tool(LLVM ${ARGV})
+  set(add_llvm_tool_args ${ARGN})
+  if(LLVM_USE_MSVC_DLLIFY AND LLVM_LINK_LLVM_DYLIB)
+    # A few tools opt out because building an extra native libLLVM is expensive
+    # in normal shared builds.  In the MSVC dllify mode LLVM.dll is already a
+    # build dependency, so keep installable tools on the requested dylib path.
+    list(REMOVE_ITEM add_llvm_tool_args DISABLE_LLVM_LINK_LLVM_DYLIB)
+  endif()
+  llvm_add_tool(LLVM ${name} ${add_llvm_tool_args})
 endmacro()
 
 

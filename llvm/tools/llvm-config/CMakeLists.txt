@@ -7,19 +7,14 @@ set(BUILDVARIABLES_SRCPATH ${CMAKE_CURRENT_SOURCE_DIR}/BuildVariables.inc.in)
 set(BUILDVARIABLES_OBJPATH ${CMAKE_CURRENT_BINARY_DIR}/BuildVariables.inc)
 
 # Add the llvm-config tool.
-set(LLVM_CONFIG_DISABLE_LLVM_LINK_LLVM_DYLIB DISABLE_LLVM_LINK_LLVM_DYLIB)
-if(LLVM_USE_MSVC_DLLIFY AND LLVM_LINK_LLVM_DYLIB)
-  set(LLVM_CONFIG_DISABLE_LLVM_LINK_LLVM_DYLIB)
-endif()
 add_llvm_tool(llvm-config
   llvm-config.cpp
   # This utility doesn't use much of LLVM, so linking a shared library for the
   # entire thing is overkill. Avoiding that especially saves on build time when cross
   # compiling LLVM and building both cross and native `llvm-config`s. We don't
   # want to build an entire native libLLVM.so in addition to the cross one just
-  # for the native `llvm-config`! In MSVC dllify builds, LLVM.dll already exists
-  # before llvm-config is linked, so use it to honor LLVM_LINK_LLVM_DYLIB.
-  ${LLVM_CONFIG_DISABLE_LLVM_LINK_LLVM_DYLIB}
+  # for the native `llvm-config`!
+  DISABLE_LLVM_LINK_LLVM_DYLIB
   )
 
 # Compute the substitution values for various items.
