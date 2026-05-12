@@ -108,9 +108,10 @@ macro(add_clang_library name)
   endif()
   llvm_add_library(${name} ${LIBTYPE} ${ARG_UNPARSED_ARGUMENTS} ${srcs})
 
-  if(MSVC AND NOT CLANG_LINK_CLANG_DYLIB)
+  if(MSVC AND (NOT CLANG_LINK_CLANG_DYLIB OR LLVM_USE_MSVC_DLLIFY))
     # Make sure all consumers also turn off visibility macros so they're not
-    # trying to dllimport symbols.
+    # trying to dllimport symbols. The MSVC dllify path supplies resolver/data
+    # stubs, so it also uses static-style headers.
     target_compile_definitions(${name} PUBLIC CLANG_BUILD_STATIC)
     if(TARGET "obj.${name}")
       target_compile_definitions("obj.${name}" PUBLIC CLANG_BUILD_STATIC)

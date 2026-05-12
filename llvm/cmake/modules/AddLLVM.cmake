@@ -98,6 +98,56 @@ function(llvm_update_compile_flags name)
   set_property(TARGET ${name} APPEND PROPERTY COMPILE_DEFINITIONS ${LLVM_COMPILE_DEFINITIONS})
 endfunction()
 
+function(llvm_msvc_dllify_prune_static_components target_name)
+  if(NOT LLVM_USE_MSVC_DLLIFY OR NOT LLVM_LINK_LLVM_DYLIB)
+    return()
+  endif()
+  if(NOT TARGET ${target_name})
+    return()
+  endif()
+
+  get_target_property(target_type ${target_name} TYPE)
+  if(target_type STREQUAL "STATIC_LIBRARY" OR target_type STREQUAL "OBJECT_LIBRARY")
+    return()
+  endif()
+
+  get_target_property(link_libraries ${target_name} LINK_LIBRARIES)
+  if(NOT link_libraries)
+    return()
+  endif()
+
+  # Only rewrite targets that already link the LLVM dylib.  The LLVM target's
+  # interface supplies the generated component stubs in the MSVC dllify build,
+  # so direct links to component archives would otherwise pull static code back
+  # into the final binary.
+  if(NOT "LLVM" IN_LIST link_libraries)
+    return()
+  endif()
+
+  llvm_map_components_to_libnames(llvm_dylib_libs ${LLVM_DYLIB_COMPONENTS})
+  list(REMOVE_ITEM llvm_dylib_libs
+    LLVM
+    LLVM-C
+    LLVMTableGen
+    LLVMTableGenBasic
+    LLVMTableGenCommon)
+  list(REMOVE_DUPLICATES llvm_dylib_libs)
+
+  set(filtered_link_libraries)
+  set(changed OFF)
+  foreach(link_library ${link_libraries})
+    if(link_library IN_LIST llvm_dylib_libs)
+      set(changed ON)
+    else()
+      list(APPEND filtered_link_libraries "${link_library}")
+    endif()
+  endforeach()
+
+  if(changed)
+    set_property(TARGET ${target_name} PROPERTY LINK_LIBRARIES "${filtered_link_libraries}")
+  endif()
+endfunction()
+
 function(add_llvm_symbol_exports target_name export_file)
   if(${CMAKE_SYSTEM_NAME} MATCHES "Darwin")
     set(native_export_file "${target_name}.exports")
@@ -649,7 +699,7 @@ function(llvm_add_library name)
   ## class members from being dllexport'ed to reduce compile time.
   ## This will also keep us below the 64k exported symbol limit
   ## https://blog.llvm.org/2018/11/30-faster-windows-builds-with-clang-cl_14.html
-  if(LLVM_BUILD_LLVM_DYLIB AND NOT LLVM_DYLIB_EXPORT_INLINES AND 
+  if(LLVM_BUILD_LLVM_DYLIB AND NOT LLVM_USE_MSVC_DLLIFY AND NOT LLVM_DYLIB_EXPORT_INLINES AND 
      MSVC AND CMAKE_CXX_COMPILER_ID MATCHES Clang)
     target_compile_options(${name} PUBLIC /Zc:dllexportInlines-)
     if(TARGET ${obj_name})
@@ -659,7 +709,7 @@ function(llvm_add_library name)
 
   if(ARG_COMPONENT_LIB)
     set_target_properties(${name} PROPERTIES LLVM_COMPONENT TRUE)
-    if(LLVM_BUILD_LLVM_DYLIB OR BUILD_SHARED_LIBS)
+    if((LLVM_BUILD_LLVM_DYLIB AND NOT LLVM_USE_MSVC_DLLIFY) OR BUILD_SHARED_LIBS)
       target_compile_definitions(${name} PRIVATE LLVM_EXPORTS)
     endif()
 
@@ -802,6 +852,11 @@ function(llvm_add_library name)
       ${lib_deps}
       ${llvm_libs}
       )
+
+  if(LLVM_USE_MSVC_DLLIFY AND LLVM_LINK_LLVM_DYLIB AND
+     NOT ARG_DISABLE_LLVM_LINK_LLVM_DYLIB AND NOT ARG_COMPONENT_LIB AND NOT ARG_STATIC)
+    cmake_language(DEFER CALL llvm_msvc_dllify_prune_static_components ${name})
+  endif()
 
   if(LLVM_COMMON_DEPENDS)
     add_dependencies(${name} ${LLVM_COMMON_DEPENDS})
@@ -1129,6 +1184,9 @@ macro(add_llvm_executable name)
   set(EXCLUDE_FROM_ALL OFF)
   set_output_directory(${name} BINARY_DIR ${LLVM_RUNTIME_OUTPUT_INTDIR} LIBRARY_DIR ${LLVM_LIBRARY_OUTPUT_INTDIR})
   llvm_config( ${name} ${USE_SHARED} ${LLVM_LINK_COMPONENTS} )
+  if(LLVM_USE_MSVC_DLLIFY AND LLVM_LINK_LLVM_DYLIB AND NOT ARG_DISABLE_LLVM_LINK_LLVM_DYLIB)
+    cmake_language(DEFER CALL llvm_msvc_dllify_prune_static_components ${name})
+  endif()
   if( LLVM_COMMON_DEPENDS )
     add_dependencies( ${name} ${LLVM_COMMON_DEPENDS} )
     foreach(objlib ${obj_name})
@@ -1162,7 +1220,7 @@ macro(add_llvm_executable name)
     target_compile_definitions(${name} PRIVATE LLVM_BUILD_STATIC)
   endif()
 
-  if(LLVM_BUILD_LLVM_DYLIB_VIS AND NOT LLVM_DYLIB_EXPORT_INLINES AND
+  if(LLVM_BUILD_LLVM_DYLIB_VIS AND NOT LLVM_USE_MSVC_DLLIFY AND NOT LLVM_DYLIB_EXPORT_INLINES AND
      MSVC AND CMAKE_CXX_COMPILER_ID MATCHES Clang)
     # This has to match how the libraries the executable is linked to are built or there be linker errors.
     target_compile_options(${name} PRIVATE /Zc:dllexportInlines-)
@@ -1522,7 +1580,14 @@ macro(llvm_add_tool project name)
 endmacro(llvm_add_tool project name)
 
 macro(add_llvm_tool name)
-  llvm_add_tool(LLVM ${ARGV})
+  set(add_llvm_tool_args ${ARGN})
+  if(LLVM_USE_MSVC_DLLIFY AND LLVM_LINK_LLVM_DYLIB)
+    # A few tools opt out because building an extra native libLLVM is expensive
+    # in normal shared builds.  In the MSVC dllify mode LLVM.dll is already a
+    # build dependency, so keep installable tools on the requested dylib path.
+    list(REMOVE_ITEM add_llvm_tool_args DISABLE_LLVM_LINK_LLVM_DYLIB)
+  endif()
+  llvm_add_tool(LLVM ${name} ${add_llvm_tool_args})
 endmacro()
 
 
@@ -1562,7 +1627,11 @@ macro(add_llvm_utility name)
     set(EXCLUDE_FROM_ALL ON)
   endif()
 
-  add_llvm_executable(${name} DISABLE_LLVM_LINK_LLVM_DYLIB ${ARGN})
+  if(LLVM_USE_MSVC_DLLIFY AND LLVM_LINK_LLVM_DYLIB)
+    add_llvm_executable(${name} ${ARGN})
+  else()
+    add_llvm_executable(${name} DISABLE_LLVM_LINK_LLVM_DYLIB ${ARGN})
+  endif()
   get_subproject_title(subproject_title)
   set_target_properties(${name} PROPERTIES FOLDER "${subproject_title}/Utils")
   if ( ${name} IN_LIST LLVM_TOOLCHAIN_UTILITIES OR NOT LLVM_INSTALL_TOOLCHAIN_ONLY)

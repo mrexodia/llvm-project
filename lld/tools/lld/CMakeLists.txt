@@ -21,7 +21,11 @@ function(lld_target_link_libraries target type)
     set(target llvm-driver)
   endif()
 
-  target_link_libraries(${target} ${type} ${ARGN})
+  if(LLD_LINK_LLD_DYLIB)
+    target_link_libraries(${target} ${type} lld-shlib)
+  else()
+    target_link_libraries(${target} ${type} ${ARGN})
+  endif()
 endfunction()
 
 lld_target_link_libraries(lld

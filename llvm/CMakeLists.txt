@@ -926,13 +926,18 @@ mark_as_advanced(LLVM_BUILD_LLVM_DYLIB_VIS)
 set(CAN_BUILD_LLVM_DYLIB OFF)
 if(NOT MSVC OR LLVM_BUILD_LLVM_DYLIB_VIS)
   set(CAN_BUILD_LLVM_DYLIB ON)
+elseif(CMAKE_SIZEOF_VOID_P EQUAL 8)
+  # MSVC/COFF cannot use LLVM's normal libLLVM.so-style build, but the
+  # llvm-shlib CMake rules can build a resolver-based LLVM.dll from the static
+  # component archives on 64-bit Windows.
+  set(CAN_BUILD_LLVM_DYLIB ON)
 endif()
 
 cmake_dependent_option(LLVM_LINK_LLVM_DYLIB "Link tools against the libllvm dynamic library" OFF
                        "CAN_BUILD_LLVM_DYLIB" OFF)
 
 set(LLVM_BUILD_LLVM_DYLIB_default OFF)
-if(LLVM_LINK_LLVM_DYLIB OR LLVM_BUILD_LLVM_C_DYLIB)
+if(LLVM_LINK_LLVM_DYLIB OR (LLVM_BUILD_LLVM_C_DYLIB AND NOT MSVC))
   set(LLVM_BUILD_LLVM_DYLIB_default ON)
 endif()
 cmake_dependent_option(LLVM_BUILD_LLVM_DYLIB "Build libllvm dynamic library" ${LLVM_BUILD_LLVM_DYLIB_default}
@@ -945,6 +950,14 @@ cmake_dependent_option(LLVM_DYLIB_EXPORT_INLINES "Force inline members of classe
 
 if(LLVM_BUILD_LLVM_DYLIB_VIS)
   set(LLVM_BUILD_LLVM_DYLIB ON)
+endif()
+
+set(LLVM_USE_MSVC_DLLIFY OFF)
+if(MSVC AND LLVM_BUILD_LLVM_DYLIB AND NOT LLVM_BUILD_LLVM_DYLIB_VIS)
+  if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "The MSVC LLVM.dll implementation currently supports only 64-bit COFF builds")
+  endif()
+  set(LLVM_USE_MSVC_DLLIFY ON)
 endif()
 
 if (LLVM_LINK_LLVM_DYLIB AND BUILD_SHARED_LIBS)
@@ -1055,7 +1068,7 @@ message(STATUS "LLVM default target triple: ${LLVM_DEFAULT_TARGET_TRIPLE}")
 set(LLVM_TARGET_TRIPLE "${LLVM_DEFAULT_TARGET_TRIPLE}")
 
 if(WIN32 OR CYGWIN)
-  if(BUILD_SHARED_LIBS OR LLVM_BUILD_LLVM_DYLIB)
+  if(BUILD_SHARED_LIBS OR (LLVM_BUILD_LLVM_DYLIB AND NOT LLVM_USE_MSVC_DLLIFY))
     set(LLVM_ENABLE_PLUGINS_default ON)
   else()
     set(LLVM_ENABLE_PLUGINS_default OFF)
@@ -1066,9 +1079,11 @@ endif()
 option(LLVM_ENABLE_PLUGINS "Enable plugin support" ${LLVM_ENABLE_PLUGINS_default})
 
 set(LLVM_ENABLE_LLVM_EXPORT_ANNOTATIONS OFF)
-if (LLVM_BUILD_LLVM_DYLIB OR LLVM_BUILD_SHARED_LIBS OR LLVM_ENABLE_PLUGINS)
+if ((LLVM_BUILD_LLVM_DYLIB AND NOT LLVM_USE_MSVC_DLLIFY) OR LLVM_BUILD_SHARED_LIBS OR LLVM_ENABLE_PLUGINS)
   # Export annotations for LLVM must be enabled if building as a shared lib or
-  # enabling plugins.
+  # enabling plugins. The MSVC dllify implementation intentionally keeps LLVM
+  # headers in static-link mode and supplies resolver/data stubs instead of
+  # relying on pervasive __declspec(dllimport/dllexport) annotations.
   set(LLVM_ENABLE_LLVM_EXPORT_ANNOTATIONS ON)
 endif()
 

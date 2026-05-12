@@ -80,6 +80,10 @@ elseif (CLANG_BUILT_STANDALONE)
   endif ()
 endif ()
 
+if(LLVM_USE_MSVC_DLLIFY AND CLANG_LINK_CLANG_DYLIB)
+  set(LIBS clang-cpp)
+endif()
+
 option(LIBCLANG_BUILD_STATIC
   "Build libclang as a static library (in addition to a shared one)" OFF)
 

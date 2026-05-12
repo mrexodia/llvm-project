@@ -171,6 +171,13 @@ endif()
 option(LLD_BUILD_TOOLS
   "Build the lld tools. If OFF, just generate build targets." ON)
 
+set(LLD_LINK_LLD_DYLIB_default OFF)
+if(LLVM_USE_MSVC_DLLIFY AND LLVM_LINK_LLVM_DYLIB)
+  set(LLD_LINK_LLD_DYLIB_default ON)
+endif()
+option(LLD_LINK_LLD_DYLIB
+  "Link lld tools against the lld dynamic library" ${LLD_LINK_LLD_DYLIB_default})
+
 option(LLD_DEFAULT_LD_LLD_IS_MINGW
     "Use MinGW as the default backend for ld.lld. If OFF, ELF will be used." OFF)
 if (LLD_DEFAULT_LD_LLD_IS_MINGW)
@@ -205,6 +212,9 @@ add_subdirectory(ELF)
 add_subdirectory(MachO)
 add_subdirectory(MinGW)
 add_subdirectory(wasm)
+if(LLD_LINK_LLD_DYLIB)
+  add_subdirectory(tools/lld-shlib)
+endif()
 
 add_custom_target(lld-headers)
 set_target_properties(lld-headers PROPERTIES FOLDER "Misc")
