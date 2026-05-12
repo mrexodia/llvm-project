@@ -80,9 +80,19 @@ if (LLVM_BUILD_UTILS)
   endif()
 endif()
 
+if (LLVM_BUILD_LLVM_DYLIB)
+  set(LLVM_CONFIG_BUILD_LLVM_DYLIB
+      "set(LLVM_BUILD_LLVM_DYLIB ${LLVM_BUILD_LLVM_DYLIB})")
+endif()
+
 if (LLVM_LINK_LLVM_DYLIB)
   set(LLVM_CONFIG_LINK_LLVM_DYLIB
       "set(LLVM_LINK_LLVM_DYLIB ${LLVM_LINK_LLVM_DYLIB})")
+endif()
+
+if (LLVM_USE_MSVC_DLLIFY)
+  set(LLVM_CONFIG_USE_MSVC_DLLIFY
+      "set(LLVM_USE_MSVC_DLLIFY ${LLVM_USE_MSVC_DLLIFY})")
 endif()
 
 # We need to use the full path to the LLVM Exports file to make sure we get the

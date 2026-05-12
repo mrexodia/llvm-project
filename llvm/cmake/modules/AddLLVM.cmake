@@ -649,7 +649,7 @@ function(llvm_add_library name)
   ## class members from being dllexport'ed to reduce compile time.
   ## This will also keep us below the 64k exported symbol limit
   ## https://blog.llvm.org/2018/11/30-faster-windows-builds-with-clang-cl_14.html
-  if(LLVM_BUILD_LLVM_DYLIB AND NOT LLVM_DYLIB_EXPORT_INLINES AND 
+  if(LLVM_BUILD_LLVM_DYLIB AND NOT LLVM_USE_MSVC_DLLIFY AND NOT LLVM_DYLIB_EXPORT_INLINES AND 
      MSVC AND CMAKE_CXX_COMPILER_ID MATCHES Clang)
     target_compile_options(${name} PUBLIC /Zc:dllexportInlines-)
     if(TARGET ${obj_name})
@@ -659,7 +659,7 @@ function(llvm_add_library name)
 
   if(ARG_COMPONENT_LIB)
     set_target_properties(${name} PROPERTIES LLVM_COMPONENT TRUE)
-    if(LLVM_BUILD_LLVM_DYLIB OR BUILD_SHARED_LIBS)
+    if((LLVM_BUILD_LLVM_DYLIB AND NOT LLVM_USE_MSVC_DLLIFY) OR BUILD_SHARED_LIBS)
       target_compile_definitions(${name} PRIVATE LLVM_EXPORTS)
     endif()
 
@@ -770,7 +770,8 @@ function(llvm_add_library name)
     # On DLL platforms symbols are imported from the tool by linking against it.
     set(llvm_libs ${ARG_PLUGIN_TOOL})
   elseif (NOT ARG_COMPONENT_LIB)
-    if (LLVM_LINK_LLVM_DYLIB AND NOT ARG_DISABLE_LLVM_LINK_LLVM_DYLIB)
+    if (LLVM_LINK_LLVM_DYLIB AND NOT ARG_DISABLE_LLVM_LINK_LLVM_DYLIB AND
+       NOT (LLVM_USE_MSVC_DLLIFY AND ARG_STATIC))
       set(llvm_libs LLVM)
     else()
       if(ARG_DISABLE_LLVM_LINK_LLVM_DYLIB)
@@ -1162,7 +1163,7 @@ macro(add_llvm_executable name)
     target_compile_definitions(${name} PRIVATE LLVM_BUILD_STATIC)
   endif()
 
-  if(LLVM_BUILD_LLVM_DYLIB_VIS AND NOT LLVM_DYLIB_EXPORT_INLINES AND
+  if(LLVM_BUILD_LLVM_DYLIB_VIS AND NOT LLVM_USE_MSVC_DLLIFY AND NOT LLVM_DYLIB_EXPORT_INLINES AND
      MSVC AND CMAKE_CXX_COMPILER_ID MATCHES Clang)
     # This has to match how the libraries the executable is linked to are built or there be linker errors.
     target_compile_options(${name} PRIVATE /Zc:dllexportInlines-)
@@ -1562,7 +1563,11 @@ macro(add_llvm_utility name)
     set(EXCLUDE_FROM_ALL ON)
   endif()
 
-  add_llvm_executable(${name} DISABLE_LLVM_LINK_LLVM_DYLIB ${ARGN})
+  if(LLVM_USE_MSVC_DLLIFY AND LLVM_LINK_LLVM_DYLIB)
+    add_llvm_executable(${name} ${ARGN})
+  else()
+    add_llvm_executable(${name} DISABLE_LLVM_LINK_LLVM_DYLIB ${ARGN})
+  endif()
   get_subproject_title(subproject_title)
   set_target_properties(${name} PROPERTIES FOLDER "${subproject_title}/Utils")
   if ( ${name} IN_LIST LLVM_TOOLCHAIN_UTILITIES OR NOT LLVM_INSTALL_TOOLCHAIN_ONLY)

@@ -426,7 +426,9 @@ int main(int argc, char **argv) {
 
   bool DyLibExists = false;
   const std::string DyLibName =
-      (SharedPrefix + "LLVM-" + SharedVersionedExt).str();
+      (HostTriple.isWindowsMSVCEnvironment() && LLVM_USE_MSVC_DLLIFY)
+          ? "LLVM.dll"
+          : (SharedPrefix + "LLVM-" + SharedVersionedExt).str();
 
   // If LLVM_LINK_DYLIB is ON, the single shared library will be returned
   // for "--libs", etc, if they exist. This behaviour can be overridden with
@@ -438,6 +440,12 @@ int main(int argc, char **argv) {
     if (DirSep == "\\")
       llvm::replace(path, '/', '\\');
     DyLibExists = sys::fs::exists(path);
+    if (HostTriple.isWindowsMSVCEnvironment() && LLVM_USE_MSVC_DLLIFY) {
+      std::string importLib = ActiveLibDir + DirSep + "LLVM.lib";
+      if (DirSep == "\\")
+        llvm::replace(importLib, '/', '\\');
+      DyLibExists = DyLibExists && sys::fs::exists(importLib);
+    }
     if (!DyLibExists) {
       // The shared library does not exist: don't error unless the user
       // explicitly passes --link-shared.
@@ -694,15 +702,22 @@ int main(int argc, char **argv) {
 
       auto PrintForLib = [&](const StringRef &Lib) {
         const bool Shared = LinkMode == LinkModeShared;
+        const bool MsvcDllify = Shared && HostTriple.isWindowsMSVCEnvironment() &&
+                                LLVM_USE_MSVC_DLLIFY;
+        const bool MsvcDllifyDyLib = MsvcDllify && Lib == DyLibName;
+        const bool UseStaticPath = MsvcDllify && Lib != DyLibName;
         if (PrintLibNames) {
-          OS << GetComponentLibraryFileName(Lib, Shared);
+          OS << (MsvcDllifyDyLib ? "LLVM.lib"
+                                 : GetComponentLibraryFileName(Lib, !UseStaticPath && Shared));
         } else if (PrintLibFiles) {
-          OS << GetComponentLibraryPath(Lib, Shared);
+          OS << (MsvcDllifyDyLib ? ActiveLibDir + DirSep + "LLVM.lib"
+                                 : GetComponentLibraryPath(Lib, !UseStaticPath && Shared));
         } else if (PrintLibs) {
           // On Windows, output full path to library without parameters.
           // Elsewhere, if this is a typical library name, include it using -l.
           if (HostTriple.isWindowsMSVCEnvironment()) {
-            OS << GetComponentLibraryPath(Lib, Shared);
+            OS << (MsvcDllifyDyLib ? ActiveLibDir + DirSep + "LLVM.lib"
+                                   : GetComponentLibraryPath(Lib, !UseStaticPath && Shared));
           } else {
             StringRef LibName;
             if (GetComponentLibraryNameSlice(Lib, LibName)) {
@@ -716,7 +731,8 @@ int main(int argc, char **argv) {
         }
       };
 
-      if (LinkMode == LinkModeShared && LinkDyLib) {
+      if (LinkMode == LinkModeShared && LinkDyLib &&
+          !(HostTriple.isWindowsMSVCEnvironment() && LLVM_USE_MSVC_DLLIFY)) {
         PrintForLib(DyLibName);
       } else {
         for (unsigned i = 0, e = RequiredLibs.size(); i != e; ++i) {
@@ -725,6 +741,11 @@ int main(int argc, char **argv) {
             OS << ' ';
 
           PrintForLib(Lib);
+        }
+        if (LinkMode == LinkModeShared && LinkDyLib) {
+          if (!RequiredLibs.empty())
+            OS << ' ';
+          PrintForLib(DyLibName);
         }
       }
       OS << '\n';
