@@ -166,6 +166,17 @@ set(MLIR_BUILD_MLIR_C_DYLIB 0 CACHE BOOL "Builds libMLIR-C shared library.")
 set(MLIR_LINK_MLIR_DYLIB ${LLVM_LINK_LLVM_DYLIB} CACHE BOOL
     "Link tools against libMLIR.so")
 
+if(LLVM_USE_MSVC_DLLIFY AND MLIR_LINK_MLIR_DYLIB)
+  # Explicit MLIR TypeIDs are self-owning data objects.  The MSVC dllify
+  # import stubs proxy data symbols, so address-based TypeIDs may otherwise
+  # differ between MLIR.dll and code compiled into tools/plugins.  The fallback
+  # resolver interns TypeIDs by type name through MLIRSupport, giving this
+  # multi-DLL layout a single process-wide TypeID identity.
+  add_compile_definitions(
+    MLIR_USE_FALLBACK_TYPE_IDS=1
+    MLIR_ALLOW_INCOMPLETE_FALLBACK_TYPE_IDS=1)
+endif()
+
 configure_file(
   ${MLIR_MAIN_INCLUDE_DIR}/mlir/Config/mlir-config.h.cmake
   ${MLIR_INCLUDE_DIR}/mlir/Config/mlir-config.h)

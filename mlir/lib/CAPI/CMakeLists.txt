@@ -21,7 +21,7 @@ if(MLIR_ENABLE_EXECUTION_ENGINE)
 endif()
 
 # Build the optional CAPI dylib.
-if(MLIR_BUILD_MLIR_C_DYLIB)
+if(MLIR_BUILD_MLIR_C_DYLIB AND NOT (LLVM_USE_MSVC_DLLIFY AND MLIR_LINK_MLIR_DYLIB))
   message(STATUS "Building MLIR-C dylib")
   get_property(_capi_libraries GLOBAL PROPERTY MLIR_CAPI_LIBS)
   add_mlir_aggregate(MLIR-C

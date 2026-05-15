@@ -820,8 +820,7 @@ function(llvm_add_library name)
     # On DLL platforms symbols are imported from the tool by linking against it.
     set(llvm_libs ${ARG_PLUGIN_TOOL})
   elseif (NOT ARG_COMPONENT_LIB)
-    if (LLVM_LINK_LLVM_DYLIB AND NOT ARG_DISABLE_LLVM_LINK_LLVM_DYLIB AND
-       NOT (LLVM_USE_MSVC_DLLIFY AND ARG_STATIC))
+    if (LLVM_LINK_LLVM_DYLIB AND NOT ARG_DISABLE_LLVM_LINK_LLVM_DYLIB)
       set(llvm_libs LLVM)
     else()
       if(ARG_DISABLE_LLVM_LINK_LLVM_DYLIB)

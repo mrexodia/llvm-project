@@ -295,7 +295,8 @@ TypeID TypeID::get() {
   class TypeIDResolver<CLASS_NAME> : public FallbackTypeIDResolver {           \
   public:                                                                      \
     static TypeID resolveTypeID() {                                            \
-      static_assert(is_fully_resolved<CLASS_NAME>(),                           \
+      static_assert(MLIR_ALLOW_INCOMPLETE_FALLBACK_TYPE_IDS ||                 \
+                        is_fully_resolved<CLASS_NAME>(),                       \
                     "TypeID::get<> requires the complete definition of `T`");  \
       static TypeID id =                                                       \
           registerImplicitTypeID(llvm::getTypeName<CLASS_NAME>());             \
@@ -310,6 +311,9 @@ TypeID TypeID::get() {
 
 #ifndef MLIR_USE_FALLBACK_TYPE_IDS
 #define MLIR_USE_FALLBACK_TYPE_IDS false
+#endif
+#ifndef MLIR_ALLOW_INCOMPLETE_FALLBACK_TYPE_IDS
+#define MLIR_ALLOW_INCOMPLETE_FALLBACK_TYPE_IDS false
 #endif
 
 #if MLIR_USE_FALLBACK_TYPE_IDS

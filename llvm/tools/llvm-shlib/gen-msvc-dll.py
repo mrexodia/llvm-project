@@ -182,6 +182,10 @@ def is_copyable_data_symbol(name: str, type_code: str) -> bool:
     """
     if not name.startswith("?"):
         return True
+    if type_code == "R":
+        # Read-only C++ ABI data and constant tables (RTTI, vtables,
+        # clang::charinfo::InfoTable, etc.) are safe and necessary to copy.
+        return True
     if "@@3PEB" in name or "@@3QEB" in name:
         # MSVC-mangled constant pointer data (for example clang-format's
         # const char * style descriptions) is commonly emitted as writable data
@@ -808,12 +812,16 @@ def make_data_proxy_obj(path: Path, lib_stem: str, data_sizes: dict[str, int], c
     table_name = f"__llvm_dllify_data_entries_{safe_stem}"
     count_name = f"__llvm_dllify_data_count_{safe_stem}"
     anchor_name = f"__llvm_dllify_data_anchor_{safe_stem}"
+    init_name = f"{anchor_name}_init"
 
     # If a consumer only references data from this component, the linker will
     # extract this proxy object but not necessarily the companion CRT initializer
-    # object.  A .drectve /include forces that helper member into the link.
+    # object.  A .drectve /include forces that helper member into the link and
+    # keeps its .CRT$XCT entry live under /OPT:REF.
     drectve = coff.add_section(".drectve", DRECTVE_CHARS)
-    coff.section(drectve).data.extend(f" /include:{anchor_name}".encode("ascii"))
+    coff.section(drectve).data.extend(
+        f" /include:{anchor_name} /include:{init_name}".encode("ascii")
+    )
 
     for sym, size in sorted(data_sizes.items()):
         data_sec_no = coff.add_section(".data$D", DATA_COMDAT_CHARS)
@@ -878,7 +886,7 @@ def make_data_helper_source(path: Path, table_name: str, count_name: str, anchor
         f'''}}\n\n'''
         f'''#pragma section(".CRT$XCT", read)\n'''
         f'''__declspec(allocate(".CRT$XCT"))\n'''
-        f'''static void (__cdecl *__llvm_dllify_copy_data_init)(void) = __llvm_dllify_copy_data;\n''',
+        f'''void (__cdecl *{anchor_name}_init)(void) = __llvm_dllify_copy_data;\n''',
         encoding="utf-8",
     )
 

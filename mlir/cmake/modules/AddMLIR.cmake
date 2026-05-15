@@ -358,11 +358,15 @@ function(add_mlir_library name)
     # Yes, because in addition to the shared library, the object files are
     # needed for linking into libMLIR.so (see mlir/tools/mlir-shlib/CMakeLists.txt).
     # For XCode, -force_load is used instead.
-    # Windows is not supported (LLVM_BUILD_LLVM_DYLIB=ON will cause an error).
-    set(NEEDS_OBJECT_LIB ON)
-    set_property(GLOBAL APPEND PROPERTY MLIR_STATIC_LIBS ${name})
-    set_property(GLOBAL APPEND PROPERTY MLIR_LLVM_LINK_COMPONENTS ${ARG_LINK_COMPONENTS})
-    set_property(GLOBAL APPEND PROPERTY MLIR_LLVM_LINK_COMPONENTS ${LLVM_LINK_COMPONENTS})
+    # The MSVC dllify implementation consumes static archives, not object files
+    # or import libraries, so separately-built shared runtime libraries are not
+    # folded into MLIR.dll there.
+    if(NOT (LLVM_USE_MSVC_DLLIFY AND ARG_SHARED))
+      set(NEEDS_OBJECT_LIB ON)
+      set_property(GLOBAL APPEND PROPERTY MLIR_STATIC_LIBS ${name})
+      set_property(GLOBAL APPEND PROPERTY MLIR_LLVM_LINK_COMPONENTS ${ARG_LINK_COMPONENTS})
+      set_property(GLOBAL APPEND PROPERTY MLIR_LLVM_LINK_COMPONENTS ${LLVM_LINK_COMPONENTS})
+    endif()
   endif ()
   if(ARG_ENABLE_AGGREGATION AND NOT XCODE)
     # Yes, because this library is added to an aggergate library such as
@@ -388,6 +392,16 @@ function(add_mlir_library name)
 
   if(TARGET ${name})
     target_link_libraries(${name} INTERFACE ${LLVM_COMMON_LIBS})
+    if(LLVM_USE_MSVC_DLLIFY AND MLIR_LINK_MLIR_DYLIB)
+      target_compile_definitions(${name} PUBLIC
+        MLIR_USE_FALLBACK_TYPE_IDS=1
+        MLIR_ALLOW_INCOMPLETE_FALLBACK_TYPE_IDS=1)
+      if(TARGET "obj.${name}")
+        target_compile_definitions("obj.${name}" PUBLIC
+          MLIR_USE_FALLBACK_TYPE_IDS=1
+          MLIR_ALLOW_INCOMPLETE_FALLBACK_TYPE_IDS=1)
+      endif()
+    endif()
     if(ARG_INSTALL_WITH_TOOLCHAIN)
       set_target_properties(${name} PROPERTIES MLIR_INSTALL_WITH_TOOLCHAIN TRUE)
     endif()
@@ -441,8 +455,55 @@ function(add_mlir_library name)
   endif()
 endfunction(add_mlir_library)
 
+function(mlir_msvc_dllify_prune_static_libraries target_name)
+  if(NOT LLVM_USE_MSVC_DLLIFY OR NOT MLIR_LINK_MLIR_DYLIB)
+    return()
+  endif()
+  if(NOT TARGET ${target_name})
+    return()
+  endif()
+
+  get_target_property(target_type ${target_name} TYPE)
+  if(target_type STREQUAL "STATIC_LIBRARY" OR target_type STREQUAL "OBJECT_LIBRARY")
+    return()
+  endif()
+
+  get_target_property(link_libraries ${target_name} LINK_LIBRARIES)
+  if(NOT link_libraries)
+    return()
+  endif()
+
+  # Only rewrite targets that already link the MLIR dylib.  The MLIR target's
+  # interface supplies the generated component stubs in the MSVC dllify build,
+  # so direct links to MLIR component archives would otherwise pull static code
+  # back into the final binary.
+  if(NOT "MLIR" IN_LIST link_libraries)
+    return()
+  endif()
+
+  get_property(mlir_dylib_libs GLOBAL PROPERTY MLIR_STATIC_LIBS)
+  list(REMOVE_DUPLICATES mlir_dylib_libs)
+
+  set(filtered_link_libraries)
+  set(changed OFF)
+  foreach(link_library ${link_libraries})
+    if(link_library IN_LIST mlir_dylib_libs)
+      set(changed ON)
+    else()
+      list(APPEND filtered_link_libraries "${link_library}")
+    endif()
+  endforeach()
+
+  if(changed)
+    set_property(TARGET ${target_name} PROPERTY LINK_LIBRARIES "${filtered_link_libraries}")
+  endif()
+endfunction()
+
 macro(add_mlir_tool name)
   llvm_add_tool(MLIR ${ARGV})
+  if(LLVM_USE_MSVC_DLLIFY AND MLIR_LINK_MLIR_DYLIB)
+    cmake_language(DEFER CALL mlir_msvc_dllify_prune_static_libraries "${name}")
+  endif()
 endmacro()
 
 # Sets a variable with a transformed list of link libraries such individual
@@ -746,6 +807,9 @@ function(mlir_target_link_libraries target type)
 
   if (MLIR_LINK_MLIR_DYLIB)
     target_link_libraries(${target} ${type} MLIR)
+    if(LLVM_USE_MSVC_DLLIFY)
+      cmake_language(DEFER CALL mlir_msvc_dllify_prune_static_libraries "${target}")
+    endif()
   else()
     target_link_libraries(${target} ${type} ${ARGN})
   endif()
